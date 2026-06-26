@@ -687,7 +687,7 @@ def render_help(params):
 # 宏观：首页面板 + 独立页
 # ----------------------------------------------------------------------
 def render_home_macro(DATA):
-    st.subheader("📡 最新宏观更新 · 对各标的影响")
+    st.subheader("📡 最新宏观更新 · 重点数据优先")
     readings = all_macro_readings()
     if not readings:
         st.info("宏观数据暂不可用（FRED 抓取失败），稍后点侧栏 🔄 刷新重试。")
@@ -697,17 +697,25 @@ def render_home_macro(DATA):
         st.caption("近期暂无新公布的重要宏观数据。完整数据见『🌍 宏观数据』页。")
         return
 
-    st.caption(f"近期已公布批次（最新参考月 {fresh[0]['ref_date'].strftime('%Y-%m')}）"
-               f"— 共 {len(fresh)} 项。点开下方可看全部与算法。")
+    newest = max(r["ref_date"] for r in fresh)
+    t1_names = [r["cfg"]["name"] for r in fresh if macro.tier(r["cfg"]) == 1]
+    st.caption(f"🟢 最新数据截至 **{newest.strftime('%Y-%m')}**，本批次共 {len(fresh)} 项"
+               + (f"；⭐重点：{'、'.join(t1_names[:8])}" if t1_names else "")
+               + "。卡片按『重点优先 + 最新在前』排列，⭐=市场最关注。")
+
+    # 重点(tier1)优先、最新参考期在前、变动大者在前
+    cards = sorted(fresh, key=lambda x: (macro.tier(x["cfg"]),
+                                         -x["ref_date"].value, -abs(x["chg"])))
     cols = st.columns(3)
     arr = {"up": "▲", "down": "▼", "flat": "▬"}
-    for i, rr in enumerate(fresh[:6]):
+    for i, rr in enumerate(cards[:9]):
         cfg = rr["cfg"]
+        star = "⭐ " if macro.tier(cfg) == 1 else ""
         with cols[i % 3]:
-            st.metric(f"{cfg['name']} · {rr['ref_date'].strftime('%y/%m')}",
+            st.metric(f"{star}{cfg['name']}",
                       macro.fmt_val(cfg, rr["value"]),
                       f"{arr[rr['dir']]} 前值 {macro.fmt_val(cfg, rr['prior'])}")
-            st.caption(macro.impact_comment(cfg, rr))
+            st.caption(f"🗓 {macro.release_hint(rr)}　·　{macro.impact_comment(cfg, rr)}")
 
     st.markdown("**最新宏观批次 → 各标的方向倾向**（规则启发，非投资建议）")
     tilt = macro.instrument_tilt(fresh)

@@ -41,6 +41,9 @@ MACRO = [
     {"id": "CPILFESL", "name": "核心CPI 同比", "kind": "yoy", "freq": "M", "fmt": "{:.1f}%",
      "season": "pct", "theme": "通胀", "up": "核心粘性通胀升温→偏鹰", "down": "核心通胀回落→偏鸽",
      "eff": {"usd": +1, "rates": +1, "gold": -1, "silver": -1, "us_eq": -1, "em_eq": -1, "semi": -1, "copper": 0, "oil": 0}},
+    {"id": "PCEPI", "name": "PCE物价·总体 同比", "kind": "yoy", "freq": "M", "fmt": "{:.1f}%",
+     "season": "pct", "theme": "通胀(美联储口径)", "up": "总体PCE通胀升温→偏鹰", "down": "总体PCE回落→偏鸽",
+     "eff": {"usd": +1, "rates": +1, "gold": -1, "silver": -1, "us_eq": -1, "em_eq": -1, "semi": -1, "copper": -1, "oil": +1}},
     {"id": "PCEPILFE", "name": "核心PCE 同比", "kind": "yoy", "freq": "M", "fmt": "{:.1f}%",
      "season": "pct", "theme": "通胀(美联储口径)", "up": "美联储最看重的通胀升温→偏鹰", "down": "核心PCE回落→偏鸽",
      "eff": {"usd": +1, "rates": +1, "gold": -1, "silver": -1, "us_eq": -1, "em_eq": -1, "semi": -1, "copper": 0, "oil": 0}},
@@ -52,6 +55,9 @@ MACRO = [
      "eff": {"usd": +1, "rates": +1, "gold": -1, "silver": -1, "us_eq": +1, "em_eq": +1, "semi": +1, "copper": +1, "oil": +1}},
     {"id": "RSAFS", "name": "零售销售 同比", "kind": "yoy", "freq": "M", "fmt": "{:.1f}%",
      "season": "pct", "theme": "消费", "up": "消费需求走强→增长+", "down": "消费走弱→需求忧",
+     "eff": {"usd": +1, "rates": +1, "gold": 0, "silver": 0, "us_eq": +1, "em_eq": +1, "semi": +1, "copper": +1, "oil": +1}},
+    {"id": "PCEC96", "name": "实际个人消费支出(PCE) 同比", "kind": "yoy", "freq": "M", "fmt": "{:.1f}%",
+     "season": "pct", "theme": "消费", "up": "实际消费走强→增长引擎+", "down": "实际消费走弱→增长忧",
      "eff": {"usd": +1, "rates": +1, "gold": 0, "silver": 0, "us_eq": +1, "em_eq": +1, "semi": +1, "copper": +1, "oil": +1}},
     {"id": "INDPRO", "name": "工业产出 同比", "kind": "yoy", "freq": "M", "fmt": "{:.1f}%",
      "season": "pct", "theme": "工业", "up": "工业走强→周期/商品+", "down": "工业走弱→周期承压",
@@ -105,11 +111,37 @@ MACRO = [
 ]
 
 
+# 一线"重点数据"（市场最关注、首页最新更新优先展示）
+TIER1 = {"CPIAUCSL", "CPILFESL", "PCEPI", "PCEPILFE", "UNRATE", "PAYEMS",
+         "RSAFS", "A191RL1Q225SBEA", "GACDFSA066MSFRBPHI", "DGORDER"}
+
+
+def tier(cfg):
+    return 1 if cfg["id"] in TIER1 else 2
+
+
 def by_id(mid):
     for m in MACRO:
         if m["id"] == mid:
             return m
     return None
+
+
+def release_hint(reading):
+    """根据参考期粗略给出"何时公布/多久前"的提示（无精确发布日，按惯例 M+1 公布）。"""
+    ref = reading["ref_date"]
+    today = pd.Timestamp.now().normalize()
+    days = (today - ref).days
+    if reading["cfg"]["freq"] == "D":
+        return f"{ref.strftime('%m月')}（月末值）"
+    # 月度/季度：参考期 + 约一个月后公布
+    approx_release = ref + pd.Timedelta(days=35)
+    d2 = (today - approx_release).days
+    if -10 <= d2 <= 20:
+        return f"{ref.strftime('%Y-%m')} 数据 · 本月新公布"
+    if d2 < -10:
+        return f"{ref.strftime('%Y-%m')} 数据 · 即将公布"
+    return f"{ref.strftime('%Y-%m')} 数据 · 约{max(0, d2)}天前"
 
 
 # ----------------------------------------------------------------------
