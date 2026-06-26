@@ -757,34 +757,50 @@ def render_macro():
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
     st.caption("🔵 = 近期已公布批次（约70天内参考期）。")
 
-    # ---- 季节性 ----
-    st.subheader("📈 季节性图（按日历月平均的环比变化）")
-    names = [r["cfg"]["name"] for r in readings]
-    sel = st.selectbox("选择宏观指标", names, index=0)
-    rr = next(r for r in readings if r["cfg"]["name"] == sel)
+    # ---- 季节性（过去 N 年 · 按日历月叠加 + 季节均线）----
+    st.subheader("📈 季节性图（过去 N 年 · 按日历月叠加 + 季节均线）")
+    themes = []
+    for r in readings:
+        if r["cfg"]["theme"] not in themes:
+            themes.append(r["cfg"]["theme"])
+    fc1, fc2, fc3 = st.columns([1.1, 2.2, 1])
+    with fc1:
+        theme_sel = st.selectbox("大类", ["全部"] + themes, index=0)
+    pool = [r for r in readings if theme_sel == "全部" or r["cfg"]["theme"] == theme_sel]
+    with fc2:
+        sel = st.selectbox("指标（含分项）", [r["cfg"]["name"] for r in pool], index=0)
+    with fc3:
+        years = st.slider("回看年数", 3, 8, 5)
+    rr = next(r for r in pool if r["cfg"]["name"] == sel)
     cfg = rr["cfg"]
     raw = load_macro_raw(cfg["id"])
     months = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"]
-    avg, cur = macro.seasonal_profile(raw, cfg["season"]) if raw is not None else (None, None)
-    if avg is not None:
+    piv, ly = macro.seasonal_by_year(raw, cfg["kind"], years) if raw is not None else (None, None)
+    kind_unit = {"yoy": "同比 %", "mom": "环比 %", "mom_diff": "环比变化", "level": "水平/指数"}.get(cfg["kind"], "")
+    if piv is not None:
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=months, y=[avg.get(m) for m in range(1, 13)],
-                             name="历史月均", marker_color="#4da6ff"))
-        if cur is not None:
-            fig.add_trace(go.Scatter(x=months, y=[cur.get(m) for m in range(1, 13)],
-                                     name="最近12个月", mode="markers+lines",
-                                     line=dict(color="#ff7043")))
-        unit = "环比 %" if cfg["season"] == "pct" else "环比变化"
-        fig.update_layout(template="plotly_dark", height=380, hovermode="x unified",
-                          margin=dict(l=10, r=10, t=30, b=10), yaxis_title=unit,
+        for col in [c for c in piv.columns if c != "平均"]:
+            is_cur = (col == ly)
+            fig.add_trace(go.Scatter(
+                x=months, y=piv[col].values, name=str(col), mode="lines+markers",
+                line=dict(width=3 if is_cur else 1.4, color="#ff7043" if is_cur else None),
+                opacity=1.0 if is_cur else 0.5))
+        fig.add_trace(go.Scatter(
+            x=months, y=piv["平均"].values, name=f"{years}年季节均线",
+            mode="lines", line=dict(width=3.5, color="#ffffff", dash="dash")))
+        fig.update_layout(template="plotly_dark", height=430, hovermode="x unified",
+                          margin=dict(l=10, r=10, t=30, b=10), yaxis_title=kind_unit,
                           legend=dict(orientation="h", y=1.02))
         st.plotly_chart(fig, width="stretch")
         cm = pd.Timestamp.now().month
-        cmv = avg.get(cm)
-        st.caption(f"读图：柱子>0 的月份，该指标历史上倾向环比走高（<0 走低）。"
-                   f"当前 {cm} 月历史月均 ≈ "
-                   f"{('%.2f' % cmv) if (cmv is not None and not pd.isna(cmv)) else '—'} {unit}。"
-                   f"季节性只是统计倾向，会被宏观大势/政策覆盖。")
+        cmv = piv.loc[cm, "平均"] if cm in piv.index else None
+        st.caption(f"读图：每条细线 = 某一年的 12 个月路径，**橙色加粗 = 今年({ly})**，"
+                   f"**白色虚线 = 过去{years}年季节均线**。同一月份看各年高低、以及今年相对均线的偏离，"
+                   f"即该月的季节性强弱与今年的季节顺/逆风。当前 {cm} 月季节均值 ≈ "
+                   f"{('%.2f' % cmv) if (cmv is not None and not pd.isna(cmv)) else '—'} {kind_unit}。"
+                   f"口径：{kind_unit}（随指标而定）。季节性只是统计倾向，会被宏观大势/政策覆盖。")
+    else:
+        st.info("该指标季节性数据不足。")
 
     # ---- 该指标走势 + 影响 ----
     st.subheader("🧭 最新方向 → 对各标的影响")

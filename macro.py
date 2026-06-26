@@ -71,6 +71,37 @@ MACRO = [
     {"id": "T10Y2Y", "name": "10Y-2Y 利差", "kind": "level", "freq": "D", "fmt": "{:+.2f}", "monthly_last": True,
      "season": "diff", "theme": "收益率曲线", "up": "曲线变陡(脱离倒挂)→衰退预警缓解", "down": "曲线趋平/倒挂→衰退预警",
      "eff": {"usd": 0, "rates": 0, "gold": 0, "silver": 0, "us_eq": +1, "em_eq": +1, "semi": +1, "copper": +1, "oil": 0}},
+
+    # ===== 耐用品订单 + 分项（环比%）=====
+    {"id": "DGORDER", "name": "耐用品订单·总(环比)", "kind": "mom", "freq": "M", "fmt": "{:+.1f}%",
+     "season": "pct", "theme": "耐用品·资本开支", "up": "耐用品订单回升→制造/投资需求+", "down": "耐用品订单走弱→需求忧",
+     "eff": {"usd": 0, "rates": +1, "gold": -1, "silver": 0, "us_eq": +1, "em_eq": +1, "semi": +1, "copper": +1, "oil": +1}},
+    {"id": "ADXTNO", "name": "耐用品订单·ex运输(环比·分项)", "kind": "mom", "freq": "M", "fmt": "{:+.1f}%",
+     "season": "pct", "theme": "耐用品·资本开支", "up": "剔除运输后核心需求走强", "down": "核心耐用品走弱",
+     "eff": {"usd": 0, "rates": +1, "gold": -1, "silver": 0, "us_eq": +1, "em_eq": +1, "semi": +1, "copper": +1, "oil": +1}},
+    {"id": "NEWORDER", "name": "核心资本品订单·ex飞机(环比·分项)", "kind": "mom", "freq": "M", "fmt": "{:+.1f}%",
+     "season": "pct", "theme": "耐用品·资本开支", "up": "企业资本开支(capex)回升→设备/半导体需求+", "down": "capex走弱→设备投资忧",
+     "eff": {"usd": 0, "rates": +1, "gold": -1, "silver": 0, "us_eq": +1, "em_eq": +1, "semi": +1, "copper": +1, "oil": +1}},
+
+    # ===== PMI 类（ISM 有版权，改用联储制造业调查·扩散指数·含分项）=====
+    {"id": "GACDFSA066MSFRBPHI", "name": "费城联储制造业·总体(PMI类)", "kind": "level", "freq": "M", "fmt": "{:.1f}",
+     "season": "diff", "theme": "制造业景气(PMI类)", "up": "制造业景气扩张(>0)→风险偏好+", "down": "制造业景气收缩→避险",
+     "eff": {"usd": 0, "rates": +1, "gold": -1, "silver": 0, "us_eq": +1, "em_eq": +1, "semi": +1, "copper": +1, "oil": +1}},
+    {"id": "NOCDFSA066MSFRBPHI", "name": "费城联储·新订单(分项)", "kind": "level", "freq": "M", "fmt": "{:.1f}",
+     "season": "diff", "theme": "制造业景气(PMI类)", "up": "新订单走强→未来生产/景气+", "down": "新订单走弱→需求转弱",
+     "eff": {"usd": 0, "rates": +1, "gold": -1, "silver": 0, "us_eq": +1, "em_eq": +1, "semi": +1, "copper": +1, "oil": +1}},
+    {"id": "SHCDFSA066MSFRBPHI", "name": "费城联储·出货(分项)", "kind": "level", "freq": "M", "fmt": "{:.1f}",
+     "season": "diff", "theme": "制造业景气(PMI类)", "up": "出货走强→当期产出+", "down": "出货走弱",
+     "eff": {"usd": 0, "rates": +1, "gold": -1, "silver": 0, "us_eq": +1, "em_eq": +1, "semi": +1, "copper": +1, "oil": +1}},
+    {"id": "NECDFSA066MSFRBPHI", "name": "费城联储·就业(分项)", "kind": "level", "freq": "M", "fmt": "{:.1f}",
+     "season": "diff", "theme": "制造业景气(PMI类)", "up": "制造业招工走强→景气+", "down": "制造业用工收缩",
+     "eff": {"usd": 0, "rates": +1, "gold": -1, "silver": 0, "us_eq": +1, "em_eq": +1, "semi": +1, "copper": +1, "oil": +1}},
+    {"id": "PPCDFSA066MSFRBPHI", "name": "费城联储·支付价格(分项·通胀)", "kind": "level", "freq": "M", "fmt": "{:.1f}",
+     "season": "diff", "theme": "制造业景气(PMI类)", "up": "投入价格上行→通胀压力(偏鹰)", "down": "投入价格回落→通胀缓和",
+     "eff": {"usd": +1, "rates": +1, "gold": -1, "silver": -1, "us_eq": -1, "em_eq": -1, "semi": -1, "copper": +1, "oil": +1}},
+    {"id": "GACDISA066MSFRBNY", "name": "纽约联储Empire制造业·总体(PMI类)", "kind": "level", "freq": "M", "fmt": "{:.1f}",
+     "season": "diff", "theme": "制造业景气(PMI类)", "up": "Empire景气扩张→风险偏好+", "down": "Empire景气收缩→避险",
+     "eff": {"usd": 0, "rates": +1, "gold": -1, "silver": 0, "us_eq": +1, "em_eq": +1, "semi": +1, "copper": +1, "oil": +1}},
 ]
 
 
@@ -157,6 +188,27 @@ def seasonal_profile(raw, season):
     return avg, cur
 
 
+def seasonal_by_year(raw, kind, years=5):
+    """
+    过去 years 年、按日历月的季节性叠加：返回 (DataFrame[index=月1..12, columns=各年份 + '平均'], 最新年份)。
+    数值口径按指标 kind（同比/环比/水平）变换，便于同月跨年对比 + 画季节均线。
+    """
+    if raw is None or len(raw) == 0:
+        return None, None
+    s = transform(raw, kind).dropna()
+    if len(s) == 0:
+        return None, None
+    df = pd.DataFrame({"v": s.values}, index=pd.DatetimeIndex(s.index))
+    df["year"] = df.index.year
+    df["month"] = df.index.month
+    ly = int(df["year"].max())
+    keep = list(range(ly - years + 1, ly + 1))
+    df = df[df["year"].isin(keep)]
+    piv = df.pivot_table(index="month", columns="year", values="v", aggfunc="last").reindex(range(1, 13))
+    piv["平均"] = piv.mean(axis=1, skipna=True)
+    return piv, ly
+
+
 # ----------------------------------------------------------------------
 def impact_signs(cfg, direction):
     """按方向返回各资产桶的影响符号(+/-/0)。direction=='down' 时翻转。"""
@@ -195,11 +247,12 @@ def instrument_tilt(fresh_readings):
 
 
 def tilt_label(score):
-    if score >= 2:
+    # 指标数较多，阈值放宽以反映"净倾向"
+    if score >= 3:
         return "偏多 🟢", "green"
     if score >= 1:
         return "略偏多 🟢", "green"
-    if score <= -2:
+    if score <= -3:
         return "偏空 🔴", "red"
     if score <= -1:
         return "略偏空 🔴", "red"
