@@ -697,15 +697,20 @@ def render_home_macro(DATA):
         st.caption("近期暂无新公布的重要宏观数据。完整数据见『🌍 宏观数据』页。")
         return
 
-    newest = max(r["ref_date"] for r in fresh)
-    t1_names = [r["cfg"]["name"] for r in fresh if macro.tier(r["cfg"]) == 1]
-    st.caption(f"🟢 最新数据截至 **{newest.strftime('%Y-%m')}**，本批次共 {len(fresh)} 项"
-               + (f"；⭐重点：{'、'.join(t1_names[:8])}" if t1_names else "")
-               + "。卡片按『重点优先 + 最新在前』排列，⭐=市场最关注。")
+    today = pd.Timestamp.now().normalize()
+    def _ago(r):
+        return (today - macro.est_release_date(r)).days
+    # 近 3 日内"刚公布"的（排除日频/准实时序列，去重保序）
+    just = [r for r in sorted(fresh, key=_ago)
+            if -1 <= _ago(r) <= 3
+            and not (r["cfg"].get("monthly_last") or r["cfg"]["freq"] == "D")]
+    just_names = list(dict.fromkeys(r["cfg"]["name"] for r in just))
+    line = f"🔥 **刚公布（近几日）**：{('、'.join(just_names[:6]))}。" if just_names else ""
+    st.caption(line + f"本批次共 {len(fresh)} 项；卡片按『最新公布在前』排列，⭐=市场最关注（CPI/PCE/非农等）。")
 
-    # 重点(tier1)优先、最新参考期在前、变动大者在前
-    cards = sorted(fresh, key=lambda x: (macro.tier(x["cfg"]),
-                                         -x["ref_date"].value, -abs(x["chg"])))
+    # 最新公布在前；同日按重点(tier1)优先、变动大者在前
+    cards = sorted(fresh, key=lambda x: (-macro.est_release_date(x).value,
+                                         macro.tier(x["cfg"]), -abs(x["chg"])))
     cols = st.columns(3)
     arr = {"up": "▲", "down": "▼", "flat": "▬"}
     for i, rr in enumerate(cards[:9]):

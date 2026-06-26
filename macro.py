@@ -127,21 +127,51 @@ def by_id(mid):
     return None
 
 
-def release_hint(reading):
-    """根据参考期粗略给出"何时公布/多久前"的提示（无精确发布日，按惯例 M+1 公布）。"""
+# 各指标"典型发布滞后"：自参考月起算(ref_date=月初)到实际公布日的天数。
+# 用于估算"何时公布/多久前"——不同数据发布节奏差异很大（非农月初、CPI月中、PCE月底）。
+RELEASE_LAG = {
+    "PAYEMS": 35, "UNRATE": 35,              # 非农/失业率：次月首个周五
+    "CPIAUCSL": 41, "CPILFESL": 41,          # CPI：次月中旬
+    "RSAFS": 47, "INDPRO": 46, "HOUST": 47,  # 零售/工业/地产：次月中
+    "UMCSENT": 27, "FEDFUNDS": 32,
+    "PCEPI": 56, "PCEPILFE": 56, "PCE": 56, "PCEC96": 56,  # PCE/收支：次月底(月底压轴)
+    "DGORDER": 55, "ADXTNO": 55, "NEWORDER": 55,           # 耐用品：次月底
+    "A191RL1Q225SBEA": 118,                  # GDP：季后约一个月(advance)
+    # 联储制造业调查：当月中下旬即公布(ref=当月月初)
+    "GACDFSA066MSFRBPHI": 18, "NOCDFSA066MSFRBPHI": 18, "SHCDFSA066MSFRBPHI": 18,
+    "NECDFSA066MSFRBPHI": 18, "PPCDFSA066MSFRBPHI": 18, "GACDISA066MSFRBNY": 15,
+}
+
+
+def est_release_date(reading):
+    """估算该读数的实际公布日（无精确发布日，用各指标典型节奏推算）。"""
+    cfg = reading["cfg"]
     ref = reading["ref_date"]
+    if cfg.get("monthly_last") or cfg["freq"] == "D":
+        return pd.Timestamp.now().normalize()  # 日频(利差等)准实时，按今日计
+    return ref + pd.Timedelta(days=RELEASE_LAG.get(cfg["id"], 40))
+
+
+def release_hint(reading):
+    """给出"约X天前/昨日/今日公布"的可读提示（基于估算发布日）。"""
+    cfg = reading["cfg"]
     today = pd.Timestamp.now().normalize()
-    days = (today - ref).days
-    if reading["cfg"]["freq"] == "D":
-        return f"{ref.strftime('%m月')}（月末值）"
-    # 月度/季度：参考期 + 约一个月后公布
-    approx_release = ref + pd.Timedelta(days=35)
-    d2 = (today - approx_release).days
-    if -10 <= d2 <= 20:
-        return f"{ref.strftime('%Y-%m')} 数据 · 本月新公布"
-    if d2 < -10:
-        return f"{ref.strftime('%Y-%m')} 数据 · 即将公布"
-    return f"{ref.strftime('%Y-%m')} 数据 · 约{max(0, d2)}天前"
+    if cfg.get("monthly_last") or cfg["freq"] == "D":
+        return f"{reading['ref_date'].strftime('%m月')} 月末值 · 准实时"
+    est = est_release_date(reading)
+    estr = f"{est.month}/{est.day}"
+    days_ago = (today - est).days
+    if days_ago < -1:
+        return f"约 {estr} 公布 · 即将"
+    if days_ago <= 0:
+        return f"🔥 约今日({estr})公布"
+    if days_ago == 1:
+        return f"🔥 约昨日({estr})公布"
+    if days_ago <= 6:
+        return f"🔥 约{days_ago}天前({estr})公布"
+    if days_ago <= 20:
+        return f"约{days_ago}天前({estr})公布"
+    return f"{reading['ref_date'].strftime('%Y-%m')}数据 · 约{days_ago}天前"
 
 
 # ----------------------------------------------------------------------
