@@ -799,6 +799,25 @@ def render_macro():
                    f"即该月的季节性强弱与今年的季节顺/逆风。当前 {cm} 月季节均值 ≈ "
                    f"{('%.2f' % cmv) if (cmv is not None and not pd.isna(cmv)) else '—'} {kind_unit}。"
                    f"口径：{kind_unit}（随指标而定）。季节性只是统计倾向，会被宏观大势/政策覆盖。")
+
+        # 今年 vs 季节均线 的偏离柱（>0 季节顺风 / <0 逆风）
+        if ly in piv.columns:
+            dev = (piv[ly] - piv["平均"])
+            colors = []
+            for v in dev.values:
+                if v is None or pd.isna(v):
+                    colors.append("rgba(120,120,120,0.3)")
+                else:
+                    colors.append("#2ecc71" if v >= 0 else "#e74c3c")
+            figd = go.Figure(go.Bar(x=months, y=dev.values, marker_color=colors,
+                                    name="今年-均线"))
+            figd.update_layout(template="plotly_dark", height=240,
+                               margin=dict(l=10, r=10, t=40, b=10),
+                               yaxis_title=f"今年偏离均线（{kind_unit}）",
+                               title=f"今年({ly}) vs {years}年季节均线：🟢>0 季节顺风 / 🔴<0 逆风")
+            st.plotly_chart(figd, width="stretch")
+            st.caption("绿柱=今年该月高于季节常态（顺风），红柱=低于常态（逆风）；"
+                       "只在今年已公布的月份有柱子。")
     else:
         st.info("该指标季节性数据不足。")
 

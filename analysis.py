@@ -27,6 +27,22 @@ def fmt_num(x, is_yield=False):
     return f"{x:.3f}"
 
 
+def month_seasonality(index, price):
+    """该标的『当前日历月』的价格季节性：历史同月月度收益均值 + 上涨年数/胜率。"""
+    try:
+        s = pd.Series(price, index=pd.DatetimeIndex(index)).dropna()
+        m = s.resample("ME").last()
+        ret = (m.pct_change() * 100).dropna()
+        cm = pd.Timestamp.now().month
+        same = ret[ret.index.month == cm]
+        if len(same) == 0:
+            return None
+        return {"month": cm, "avg": float(same.mean()), "n": int(len(same)),
+                "pos": int((same > 0).sum()), "winrate": float((same > 0).mean() * 100)}
+    except Exception:
+        return None
+
+
 def forward_view(r, name, is_yield=False, tol=6):
     """
     生成自然语言『后续走势观点』，模仿示例口吻：
@@ -118,8 +134,23 @@ def forward_view(r, name, is_yield=False, tol=6):
                          f"平均约 {micro_w:.0f} 周的微周期，本轮仍在运行中。")
 
     text = comp_sentence + nest_sentence
+
+    # ---- 本月价格季节性（顺/逆风）----
+    seas = month_seasonality(idx, r.get("price"))
+    if seas is not None:
+        what = "收益率" if is_yield else "价格"
+        if seas["avg"] > 0.05:
+            tone = "季节顺风(历史本月多偏强)"
+        elif seas["avg"] < -0.05:
+            tone = "季节逆风(历史本月多偏弱)"
+        else:
+            tone = "季节中性"
+        text += (f" 季节性：{seas['month']}月{what}历史同月均值 {seas['avg']:+.1f}%"
+                 f"（近{seas['n']}年{seas['pos']}年上涨·胜率{seas['winrate']:.0f}%），{tone}。")
+
     return {"text": text, "window": window, "window_kind": window_kind,
-            "micro_end": micro_end, "round": round_k, "micro_weeks": micro_w}
+            "micro_end": micro_end, "round": round_k, "micro_weeks": micro_w,
+            "seasonality": seas}
 
 
 def atr(df, n=14):
