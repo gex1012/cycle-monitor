@@ -63,13 +63,15 @@ def future_bdates(last_date, n):
 
 
 def pos_to_date(pos, hist_index, fut_index):
-    """把"从 0 起算的 bar 位置"映射成日期。pos 可越过历史末端进入投影区。"""
+    """把"从 0 起算的 bar 位置"映射成日期。pos 可为小数、并可越过历史末端进入投影区。"""
     N = len(hist_index)
-    if pos < 0:
-        pos = 0
-    if pos < N:
-        return pd.Timestamp(hist_index[int(round(pos))])
-    fpos = int(round(pos)) - N
+    # 先取整成索引，再分支，避免 pos∈[N-0.5, N) 时 round 到 N 越界
+    i = int(round(pos))
+    if i < 0:
+        i = 0
+    if i < N:
+        return pd.Timestamp(hist_index[i])
+    fpos = i - N
     if fpos < len(fut_index):
         return pd.Timestamp(fut_index[fpos])
     # 超出投影区则线性外推工作日
