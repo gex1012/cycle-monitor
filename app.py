@@ -19,6 +19,7 @@ from data import fetch_ohlc
 from cycles import analyze, confidence_label
 import analysis
 import macro
+import rotation
 
 st.set_page_config(page_title="周期择时监测平台", layout="wide",
                    initial_sidebar_state="expanded")
@@ -50,6 +51,15 @@ def load_macro_reading(mid):
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_macro_raw(mid):
     return macro.fetch_raw(mid)
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_rotation_base(period):
+    """抓取行业 ETF 并算 RRG/扩散（重活，缓存；市场择时开关不触发重算）。"""
+    px = rotation.fetch_universe(period)
+    if px is None or px.empty or rotation.BENCHMARK[0] not in px:
+        return None
+    return px, rotation.compute_rrg(px), rotation.compute_diffusion(px)
 
 
 def all_macro_readings():
@@ -139,6 +149,7 @@ st.sidebar.title("⏱ 周期择时监测")
 st.sidebar.caption(config.DATA_SOURCE)
 
 view = st.sidebar.radio("视图", ["🏠 首页 · 信号板", "🔬 标的详情",
+                                 "🔄 A股行业轮动 · 模拟盘",
                                  "🌍 宏观数据 · 季节性", "📖 帮助 · 信号解读"],
                         index=0)
 
@@ -846,10 +857,149 @@ def render_macro():
 
 
 # ----------------------------------------------------------------------
+# A股行业轮动 · 模拟盘
+# ----------------------------------------------------------------------
+def build_rrg_chart(pts):
+    fig = go.Figure()
+    ratios = [p["ratio"] for p in pts.values()]
+    moms = [p["mom"] for p in pts.values()]
+    if not ratios:
+        return fig
+    pad = 0.6
+    xr = [min(ratios + [100]) - pad, max(ratios + [100]) + pad]
+    yr = [min(moms + [100]) - pad, max(moms + [100]) + pad]
+    qbg = {"领先": "rgba(46,204,113,0.10)", "改善": "rgba(52,152,219,0.10)",
+           "滞后": "rgba(231,76,60,0.10)", "走弱": "rgba(241,196,15,0.10)"}
+    fig.add_shape(type="rect", x0=100, y0=100, x1=xr[1], y1=yr[1], fillcolor=qbg["领先"], line_width=0, layer="below")
+    fig.add_shape(type="rect", x0=xr[0], y0=100, x1=100, y1=yr[1], fillcolor=qbg["改善"], line_width=0, layer="below")
+    fig.add_shape(type="rect", x0=xr[0], y0=yr[0], x1=100, y1=100, fillcolor=qbg["滞后"], line_width=0, layer="below")
+    fig.add_shape(type="rect", x0=100, y0=yr[0], x1=xr[1], y1=100, fillcolor=qbg["走弱"], line_width=0, layer="below")
+    fig.add_vline(x=100, line=dict(color="#888", width=1))
+    fig.add_hline(y=100, line=dict(color="#888", width=1))
+    mc = {"领先": "#2ecc71", "改善": "#3498db", "滞后": "#e74c3c", "走弱": "#f1c40f"}
+    for p in pts.values():
+        c = mc.get(p["quadrant"], "#aaa")
+        fig.add_trace(go.Scatter(x=p["tail_ratio"], y=p["tail_mom"], mode="lines",
+                                 line=dict(color=c, width=1), opacity=0.4,
+                                 showlegend=False, hoverinfo="skip"))
+        fig.add_trace(go.Scatter(x=[p["ratio"]], y=[p["mom"]], mode="markers+text",
+                                 marker=dict(color=c, size=11, line=dict(color="#fff", width=1)),
+                                 text=[p["name"]], textposition="top center", textfont=dict(size=10),
+                                 showlegend=False,
+                                 hovertemplate=f"{p['name']}<br>RS-Ratio %{{x:.1f}}<br>RS-Mom %{{y:.1f}}<br>{p['quadrant']}<extra></extra>"))
+    for x, y, tx, ty, col, txt in [
+        (xr[1], yr[1], "right", "top", "#2ecc71", "领先 ▲"),
+        (xr[0], yr[1], "left", "top", "#3498db", "改善"),
+        (xr[0], yr[0], "left", "bottom", "#e74c3c", "滞后"),
+        (xr[1], yr[0], "right", "bottom", "#f1c40f", "走弱")]:
+        fig.add_annotation(x=x, y=y, text=txt, showarrow=False,
+                           font=dict(color=col, size=13), xanchor=tx, yanchor=ty)
+    fig.update_layout(template="plotly_dark", height=520, margin=dict(l=10, r=10, t=30, b=10),
+                      xaxis_title="RS-Ratio（相对强弱趋势，>100 强）",
+                      yaxis_title="RS-Momentum（动量，>100 改善）",
+                      xaxis_range=xr, yaxis_range=yr)
+    return fig
+
+
+def build_nav_chart(navdf):
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=navdf.index, y=navdf["strategy"], name="轮动模拟盘",
+                             line=dict(color="#ff7043", width=2)))
+    fig.add_trace(go.Scatter(x=navdf.index, y=navdf["benchmark"], name="沪深300",
+                             line=dict(color="#4da6ff", width=1.5)))
+    fig.update_layout(template="plotly_dark", height=360, hovermode="x unified",
+                      margin=dict(l=10, r=10, t=30, b=10), yaxis_title="净值（起点=1）",
+                      legend=dict(orientation="h", y=1.02))
+    return fig
+
+
+def render_rotation():
+    st.title("🔄 A股行业轮动 · 模拟盘")
+    st.caption("复刻 西部证券『RRG(相对旋转图) + 扩散指标』行业轮动：每月末取扩散 Top6、"
+               "剔除三/四象限(滞后·走弱)、等权持有。数据源：Yahoo 行业 ETF 日线。")
+
+    with st.expander("⚠️ 方法与重要声明（务必先读）", expanded=False):
+        st.markdown("""
+- **策略**：每月末 → 取扩散指标最高的 6 个行业 → 剔除 RRG 三/四象限(滞后·走弱) → 等权持有；月末调仓。
+- **RRG**：RS-Ratio(相对强弱, 回看220日) + RS-Momentum(动量, 回看60日)，MA20 平滑，中心化到 100。
+  四象限：领先(+/+)·改善(-/+)·滞后(-/-)·走弱(+/-)。JdK 原式为专有，此处用标准 z-score 公开复现。
+- **诚实声明（与原文差异）**：
+  1. 原文『扩散指标』是**行业内成分股广度**(需成分股数据，免费源拿不到)——本处用 **ETF 自身多周期趋势强度做代理**，非原文口径。
+  2. **行业池用 19 只流动性最好的行业 ETF** 代理中信一级(非全 30 个)。
+  3. **免费数据历史不足**：这些 ETF 多 2019–2020 才上市，RRG 需 ~300 日预热，故回测**只能从约 2020-11 起**，
+     **错过了原文 2019–2021 大牛市**——这是本模拟盘达不到原文『年化 20.6%』的主因，属数据限制而非模型对错。
+- **市场择时开关**：可选叠加『沪深300 跌破 200 日线则空仓』，直接针对原文自陈的"震荡市热点切换快、易回撤"弱点。
+- 模拟盘不含交易成本/冲击，**仅供研究，非投资建议**。
+        """)
+
+    base = load_rotation_base("8y")
+    if base is None:
+        st.error("行业 ETF 数据加载失败，稍后点侧栏 🔄 刷新行情 重试。")
+        return
+    px, rrg, diff = base
+
+    mf = st.checkbox("✅ 叠加市场择时（沪深300 跌破 200 日线则空仓，规避震荡市回撤）", value=True,
+                     help="关闭=忠实原文规则；打开=叠加经典 200 日线风控。两者业绩差异见下方指标。")
+    navdf, log, cur, start = rotation.backtest(px, rrg, diff, market_filter=mf)
+    m = rotation.perf_metrics(navdf)
+    cur_rows, diff_rows, last_date = rotation.snapshot(px, rrg, diff, cur)
+    pts = rotation.rrg_points(rrg)
+    nxt = rotation.next_rebalance(px)
+
+    # 当前持仓
+    st.subheader(f"📌 当前模拟持仓（截至 {last_date.date()}）")
+    if cur_rows:
+        cdf = pd.DataFrame(cur_rows)
+        cdf["扩散分"] = cdf["扩散分"].map(lambda x: f"{x:.2f}")
+        cdf["RS-Ratio"] = cdf["RS-Ratio"].map(lambda x: f"{x:.1f}")
+        cdf["RS-Mom"] = cdf["RS-Mom"].map(lambda x: f"{x:.1f}")
+        cdf["近1月"] = cdf["近1月"].map(fmt_pct)
+        st.dataframe(cdf, hide_index=True, width="stretch")
+        st.success(f"等权持有以上 **{len(cur_rows)}** 个行业；下次调仓：**{nxt.date()}**（月末）。")
+    else:
+        st.warning(f"当前规则下 **空仓**（扩散 Top6 全部处于滞后/走弱象限"
+                   + ("，或市场择时触发空仓" if mf else "") + f"）。下次调仓：{nxt.date()}。")
+
+    # 业绩
+    st.subheader(f"💰 模拟盘业绩（回测起点 {pd.Timestamp(start).date()}）")
+    cc = st.columns(4)
+    cc[0].metric("策略年化", f"{m['年化收益']*100:.1f}%", f"超额 {m['年化超额']*100:+.1f}%")
+    cc[1].metric("沪深300 年化", f"{m['基准年化']*100:.1f}%")
+    cc[2].metric("最大回撤", f"{m['最大回撤']*100:.1f}%",
+                 f"基准 {m['基准最大回撤']*100:.1f}%", delta_color="off")
+    cc[3].metric("夏普 / 月胜率", f"{m['夏普']:.2f}", f"{m['月度胜率']:.0f}%")
+    st.plotly_chart(build_nav_chart(navdf), width="stretch")
+
+    # RRG 图
+    st.subheader("🧭 RRG 相对旋转图（最新 + 近 8 周尾迹）")
+    st.plotly_chart(build_rrg_chart(pts), width="stretch")
+    st.caption("右上=领先，左上=改善，左下=滞后，右下=走弱；尾迹是各行业近 8 周的旋转轨迹（多为顺时针）。"
+               "策略持有的是『扩散 Top6 且落在领先/改善』的行业。")
+
+    # 扩散排名
+    st.subheader("📊 扩散指标排名（代理版）· 全行业")
+    ddf = pd.DataFrame(diff_rows)
+    ddf["扩散分"] = ddf["扩散分"].map(lambda x: f"{x:.2f}")
+    ddf["RS-Ratio"] = ddf["RS-Ratio"].map(lambda x: f"{x:.1f}" if pd.notna(x) else "—")
+    ddf["RS-Mom"] = ddf["RS-Mom"].map(lambda x: f"{x:.1f}" if pd.notna(x) else "—")
+    st.dataframe(ddf, hide_index=True, width="stretch")
+
+    with st.expander("🗓 最近调仓记录（近 12 次）"):
+        rows = [{"调仓日": pd.Timestamp(h["date"]).date(),
+                 "持有行业": "、".join(h["holdings"]) if h["holdings"] else "空仓"}
+                for h in log[-12:][::-1]]
+        st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+    st.caption("⚠️ 规则驱动模拟盘，不含交易成本；扩散为 ETF 趋势代理、行业池为 19 只 ETF，与原文口径不同；仅研究，非投资建议。")
+
+
+# ----------------------------------------------------------------------
 if view.startswith("🏠"):
     render_home(load_all(params))
 elif view.startswith("🔬"):
     render_detail(load_all(params))
+elif view.startswith("🔄"):
+    render_rotation()
 elif view.startswith("🌍"):
     render_macro()
 else:
